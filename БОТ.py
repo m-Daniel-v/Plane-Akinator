@@ -2,201 +2,208 @@ import telebot
 from telebot import types
 import sqlite3
 
-API_TOKEN = '6870588906:AAESoxC12LH6-oPAbulw70rp3PqMIalm_lc'
-bot = telebot.TeleBot(API_TOKEN)
+
+bot = telebot.TeleBot('6870588906:AAESoxC12LH6-oPAbulw70rp3PqMIalm_lc')
 
 
-class Aircraft:
-    def __init__(self, name):
-        self.name = name
-        self.attributes = []
-
-    def add_attribute(self, attribute):
-        self.attributes.append(attribute)
-
-
-aircrafts = []
-
-
-def load_aircrafts():
-    conn = sqlite3.connect('aircrafts.db')
+def load_data(db_file):
+    conn = sqlite3.connect(db_file)
     cursor = conn.cursor()
-    cursor.execute(
-        'SELECT name, type, developer, manufacturer, first_flight, introduction, status, operators, production_years, number_built FROM aircrafts')
-    rows = cursor.fetchall()
+    cursor.execute('SELECT * FROM aircrafts')
+    data = cursor.fetchall()
     conn.close()
-
-    for row in rows:
-        name = row[0]
-        aircraft = Aircraft(name)
-        for attribute in row[1:]:
-            if attribute:
-                aircraft.add_attribute(attribute)
-        aircrafts.append(aircraft)
+    return data
 
 
-load_aircrafts()
+def preprocess_data(data):
+    processed_data = []
+    for row in data:
+        processed_data.append({
+            'name': row[1].lower(),
+            'classification_role': row[2].lower().split(';') if row[2] else [],
+            'subclassification_role': row[3].lower().split(';') if row[3] else [],
+            'aerodynamic_balance_scheme': row[4].lower().split(';') if row[4] else [],
+            'construction_classification': row[5].lower().split(';') if row[5] else [],
+            'engine_type': row[6].lower().split(';') if row[6] else [],
+            'flight_range_classification': row[7].lower().split(';') if row[7] else [],
+            'number_of_engines': row[8],
+            'wing_location_classification': row[9].lower().split(';') if row[9] else [],
+            'fuselage_type_classification': row[10].lower().split(';') if row[10] else [],
+            'chassis_type_classification': row[11].lower().split(';') if row[11] else [],
+            'tail_type_and_location_classification': row[12].lower().split(';') if row[12] else [],
+            'engine_location_classification': row[13].lower().split(';') if row[13] else []
+        })
+    return processed_data
+
+
+def generate_question(classification, column_name):
+    questions = {
+        'classification_role': 'Это {} по назначению?',
+        'subclassification_role': 'Это {} по подклассификации назначения?',
+        'aerodynamic_balance_scheme': 'Это {} по аэродинамической балансировочной схеме?',
+        'construction_classification': 'Это {} по конструкции?',
+        'engine_type': 'Это {} по типу двигателя?',
+        'flight_range_classification': 'Это {} по диапазону полёта?',
+        'wing_location_classification': 'Это {} по расположению крыльев?',
+        'fuselage_type_classification': 'Это {} по типу фюзеляжа?',
+        'chassis_type_classification': 'Это {} по типу шасси?',
+        'tail_type_and_location_classification': 'Это {} по типу и расположению оперения?',
+        'engine_location_classification': 'Это {} по расположению двигателей?'
+    }
+    return questions[column_name].format(classification)
+
+
+db_file = 'aircrafts.db'
+data = load_data(db_file)
+processed_data = preprocess_data(data)
+
 
 user_state = {}
-
-question_templates = {
-    'type': 'Этот самолёт {}?',
-    'developer': 'Этот самолёт разработан {}?',
-    'manufacturer': 'Этот самолёт произведен {}?',
-    'first_flight': 'Первый полёт этого самолёта был {}?',
-    'introduction': 'Этот самолёт был введен в эксплуатацию {}?',
-    'status': 'Этот самолёт сейчас {}?',
-    'operators': 'Этот самолёт эксплуатируется {}?',
-    'production_years': 'Этот самолёт производился {}?',
-    'number_built': 'Единиц этого самолёта произведено {}?'
-}
+new_aircraft_data = {}
 
 
-def reset_game(chat_id):
-    user_state[chat_id] = {
-        "state": "start",
-        "local_list": list(aircrafts),
-        "positive_answers": [],
-        "negative_answers": [],
-        "current_aircraft": None,
-        "current_attribute": None
-    }
-
-
+# Обработчик команды /start
 @bot.message_handler(commands=['start'])
-def start_game(message):
-    reset_game(message.chat.id)
-    bot.send_message(message.chat.id, "Загадай самолёт и нажми /ready")
+def send_welcome(message):
+    user_id = message.chat.id
+    user_state[user_id] = {
+        'step': 0,
+        'current_data': processed_data,
+        'yes_answers': [],
+        'no_answers': []
+    }
+    bot.send_message(user_id,
+                     "Добро пожаловать! Давайте начнем угадывать самолёт. Отвечайте на вопросы да, нет или не знаю.")
+    ask_question(message)
 
 
-@bot.message_handler(commands=['ready'])
-def ready(message):
-    state = user_state.get(message.chat.id, {})
-    if state and state.get("state") == "start":
-        bot.send_message(message.chat.id, "Начинаю угадывать!")
-        ask_question(message)
-    else:
-        bot.send_message(message.chat.id, "Нажмите /start чтобы начать сначала.")
-
-
+# Функция для задания вопроса
 def ask_question(message):
-    state = user_state[message.chat.id]
-    local_list = state["local_list"]
+    user_id = message.chat.id
+    state = user_state[user_id]
+    current_data = state['current_data']
 
-    if not local_list:
-        bot.send_message(message.chat.id, "Не знаю, что это :( Как называется этот самолёт?")
-        state["state"] = "add_aircraft"
+    if not current_data:
+        bot.send_message(user_id, "Не удалось определить самолёт.")
+        request_new_aircraft_data(user_id)
         return
 
-    if state["current_aircraft"] is None:
-        state["current_aircraft"] = local_list.pop(0)
+    for aircraft in current_data:
+        for column_key in [
+            'classification_role', 'subclassification_role', 'aerodynamic_balance_scheme',
+            'construction_classification', 'engine_type', 'flight_range_classification',
+            'wing_location_classification', 'fuselage_type_classification',
+            'chassis_type_classification', 'tail_type_and_location_classification',
+            'engine_location_classification'
+        ]:
+            classification = aircraft[column_key]
+            if classification and (column_key, classification[0]) not in state['yes_answers'] and (
+            column_key, classification[0]) not in state['no_answers']:
+                question = generate_question(classification[0], column_key)
 
-    current_aircraft = state["current_aircraft"]
+                markup = types.ReplyKeyboardMarkup(row_width=3)
+                markup.add('да', 'нет', 'не знаю')
 
-    for attribute in current_aircraft.attributes:
-        if attribute not in state["positive_answers"] and attribute not in state["negative_answers"]:
-            question = generate_question(attribute)
-            state["current_attribute"] = attribute
-            keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-            button_yes = types.KeyboardButton('Да')
-            button_no = types.KeyboardButton('Нет')
-            button_unknown = types.KeyboardButton('Не знаю')
-            keyboard.add(button_yes, button_no, button_unknown)
-            bot.send_message(message.chat.id, question, reply_markup=keyboard)
-            return
+                state['current_classification'] = classification[0]
+                state['current_column'] = column_key
 
-    bot.send_message(message.chat.id, f"Я угадал! Это {current_aircraft.name}?")
-    state["state"] = "guess"
-    keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-    button_yes = types.KeyboardButton('Да')
-    button_no = types.KeyboardButton('Нет')
-    keyboard.add(button_yes, button_no)
-    bot.send_message(message.chat.id, "Правильно?", reply_markup=keyboard)
+                bot.send_message(user_id, question, reply_markup=markup)
+                return
+
+    bot.send_message(user_id, "Не удалось определить самолёт.")
+    request_new_aircraft_data(user_id)
 
 
+# Функция для запроса данных о новом самолете
+def request_new_aircraft_data(user_id):
+    new_aircraft_data[user_id] = {}
+    questions = [
+        "Пожалуйста, укажите название самолёта:",
+        "Классификация по назначению:",
+        "Подклассификация по назначению:",
+        "Классификация по аэродинамической балансировочной схеме:",
+        "Классификация по конструкции:",
+        "Классификация по типу двигателя:",
+        "Классификация по диапазону полёта:",
+        "Количество двигателей:",
+        "Классификация по расположению крыльев:",
+        "Классификация по типу фюзеляжа:",
+        "Классификация по типу шасси:",
+        "Классификация по типу и расположению оперения:",
+        "Классификация по расположению двигателей:"
+    ]
+    new_aircraft_data[user_id]['questions'] = questions
+    new_aircraft_data[user_id]['answers'] = []
+    bot.send_message(user_id, questions[0])
+
+
+# Обработчик текстовых сообщений
 @bot.message_handler(func=lambda message: True)
-def handle_message(message):
-    state = user_state.get(message.chat.id, {})
-    if not state:
-        bot.send_message(message.chat.id, "Нажмите /start чтобы начать игру.")
+def handle_answer(message):
+    user_id = message.chat.id
+
+    if user_id not in user_state and user_id not in new_aircraft_data:
+        bot.send_message(user_id, "Начните с команды /start.")
         return
 
-    if state["state"] == "add_aircraft":
-        bot.send_message(message.chat.id, "Пожалуйста, введите название самолёта.")
-        state["state"] = "add_aircraft_name"
-        bot.register_next_step_handler(message, add_aircraft_name)
-        return
+    if user_id in new_aircraft_data:
+        state = new_aircraft_data[user_id]
+        state['answers'].append(message.text.strip())
 
-    if state["state"] == "guess":
-        if message.text.lower() == "да":
-            bot.send_message(message.chat.id, "Ура! Сыграем еще? /start", reply_markup=types.ReplyKeyboardRemove())
-            reset_game(message.chat.id)
+        if len(state['answers']) < len(state['questions']):
+            bot.send_message(user_id, state['questions'][len(state['answers'])])
         else:
-            bot.send_message(message.chat.id, "Жаль :( Попробую еще раз!", reply_markup=types.ReplyKeyboardRemove())
-            state["current_aircraft"] = None
-            ask_question(message)
+            save_new_aircraft_data(state['answers'])
+            bot.send_message(user_id, "Спасибо! Ваши данные сохранены.")
+            new_aircraft_data.pop(user_id)
         return
 
-    if state["state"] == "start" and "current_aircraft" in state:
-        attribute = state["current_attribute"]
-        if message.text.lower() == "да":
-            state["positive_answers"].append(attribute)
-        elif message.text.lower() == "нет":
-            state["negative_answers"].append(attribute)
-            state["current_aircraft"] = None  # move to the next aircraft
-        else:
-            bot.send_message(message.chat.id, "Ответ не распознан. Пожалуйста, ответьте 'Да', 'Нет' или 'Не знаю'.")
-            return
-        ask_question(message)
+    state = user_state[user_id]
+
+    if 'current_classification' not in state:
+        bot.send_message(user_id, "Начните с команды /start.")
+        return
+
+    answer = message.text.strip().lower()
+    classification = state['current_classification']
+    column_key = state['current_column']
+
+    if answer == 'да':
+        state['yes_answers'].append((column_key, classification))
+        state['current_data'] = [entry for entry in state['current_data'] if classification in entry[column_key]]
+    elif answer == 'нет':
+        state['no_answers'].append((column_key, classification))
+        state['current_data'] = [entry for entry in state['current_data'] if classification not in entry[column_key]]
+
+    if len(state['current_data']) == 1:
+        bot.send_message(user_id, f"Ура, я угадал! Вы загадали самолёт: {state['current_data'][0]['name'].title()}")
+        user_state.pop(user_id)
+        return
+    elif len(state['current_data']) == 0:
+        bot.send_message(user_id, "Не удалось определить самолёт.")
+        request_new_aircraft_data(user_id)
+        user_state.pop(user_id)
+        return
+
+    ask_question(message)
 
 
-def add_aircraft_name(message):
-    state = user_state[message.chat.id]
-    aircraft_name = message.text
-    bot.send_message(message.chat.id, "Введите ключевые слова через запятую.")
-    state["new_aircraft_name"] = aircraft_name
-    bot.register_next_step_handler(message, add_aircraft_attributes)
+# Функция для сохранения новых данных о самолете
+def save_new_aircraft_data(answers):
+    conn = sqlite3.connect('aircrafts.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        INSERT INTO aircrafts (
+            name, classification_role, subclassification_role, aerodynamic_balance_scheme,
+            construction_classification, engine_type, flight_range_classification,
+            number_of_engines, wing_location_classification, fuselage_type_classification,
+            chassis_type_classification, tail_type_and_location_classification,
+            engine_location_classification
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    ''', answers)
+    conn.commit()
+    conn.close()
 
 
-def add_aircraft_attributes(message):
-    state = user_state[message.chat.id]
-    attributes = message.text.split(',')
-    aircraft = Aircraft(state["new_aircraft_name"])
-    for attribute in attributes:
-        aircraft.add_attribute(attribute.strip())
-    aircrafts.append(aircraft)
-    bot.send_message(message.chat.id, "Спасибо! Я запомнил :) Готов попробовать еще раз! /start",
-                     reply_markup=types.ReplyKeyboardRemove())
-    reset_game(message.chat.id)
-
-
-def match_answers(answers, aircraft):
-    for answer in answers:
-        if answer not in aircraft.attributes:
-            return False
-    return True
-
-
-def generate_question(attribute):
-    for key, template in question_templates.items():
-        if key in attribute.lower():
-            return template.format(attribute)
-    return f"Это {attribute}?"
-
-
-@bot.message_handler(commands=['buttons'])
-def send_buttons(message):
-    keyboard = types.ReplyKeyboardMarkup(row_width=1, resize_keyboard=True)
-    button_yes = types.KeyboardButton('Да')
-    button_no = types.KeyboardButton('Нет')
-    button_unknown = types.KeyboardButton('Не знаю')
-    keyboard.add(button_yes, button_no, button_unknown)
-    bot.send_message(message.chat.id, "Выберите вариант:", reply_markup=keyboard)
-
-
-@bot.message_handler(func=lambda message: message.text in ['Да', 'Нет', 'Не знаю'])
-def handle_button_response(message):
-    handle_message(message)
-
-
-bot.polling()
+if __name__ == '__main__':
+    bot.polling(none_stop=True)
