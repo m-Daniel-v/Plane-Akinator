@@ -3,7 +3,7 @@ from telebot import types
 import sqlite3
 
 
-bot = telebot.TeleBot('6870588906:AAESoxC12LH6-oPAbulw70rp3PqMIalm_lc')
+bot = telebot.TeleBot('6754617208:AAHIpYXWjXB6PYuiKl0v5MtWBXr_KQP_2vs')
 
 
 def load_data(db_file):
