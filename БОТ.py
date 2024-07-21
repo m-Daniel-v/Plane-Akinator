@@ -3,7 +3,7 @@ from telebot import types
 import sqlite3
 
 
-bot = telebot.TeleBot('API_TOKEN')
+bot = telebot.TeleBot('6754617208:AAHyxtRbD43fFGaBXhwbvD0iKvgpOrLdZvY')
 
 
 def load_data(db_file):
@@ -26,7 +26,7 @@ def preprocess_data(data):
             'construction_classification': row[5].lower().split(';') if row[5] else [],
             'engine_type': row[6].lower().split(';') if row[6] else [],
             'flight_range_classification': row[7].lower().split(';') if row[7] else [],
-            'number_of_engines': str(row[8]),  # Преобразуем в строку
+            'number_of_engines': str(row[8]),  # Преобразуем в строку для единообразия
             'wing_location_classification': row[9].lower().split(';') if row[9] else [],
             'fuselage_type_classification': row[10].lower().split(';') if row[10] else [],
             'chassis_type_classification': row[11].lower().split(';') if row[11] else [],
@@ -36,6 +36,7 @@ def preprocess_data(data):
     return processed_data
 
 
+# Функция для генерации вопросов на основе классификаций
 def generate_question(classification, column_name):
     questions = {
         'classification_role': 'Это {} самолёт?',
@@ -54,6 +55,7 @@ def generate_question(classification, column_name):
     return questions[column_name].format(classification)
 
 
+# Загрузка данных из базы данных
 db_file = 'aircrafts.db'
 data = load_data(db_file)
 processed_data = preprocess_data(data)
@@ -70,6 +72,7 @@ def reset_game(message, restart=False):
         'current_data': processed_data,
         'yes_answers': [],
         'no_answers': [],
+        'skip_columns': set(),
         'asked_columns': set(),
         'last_question': False
     }
@@ -77,7 +80,7 @@ def reset_game(message, restart=False):
         new_aircraft_data.pop(user_id)  # Удаляем промежуточные данные о новом самолете
     if restart:
         bot.send_message(user_id,
-                         "Игра перезапущена. Давайте начнем угадывать самолёт заново. Отвечайте на вопросы да или нет.")
+                         "Игра перезапущена. Давайте начнем угадывать самолёт заново. Отвечайте на вопросы да, нет или не знаю.")
     ask_question(message)
 
 
@@ -85,7 +88,8 @@ def reset_game(message, restart=False):
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_id = message.chat.id
-    bot.send_message(user_id, "Добро пожаловать! Давайте начнем угадывать самолёт. Отвечайте на вопросы да или нет.")
+    bot.send_message(user_id,
+                     "Добро пожаловать! Давайте начнем угадывать самолёт. Отвечайте на вопросы да, нет или не знаю.")
     reset_game(message)
 
 
@@ -114,6 +118,8 @@ def ask_question(message):
     ]
 
     for column_key in question_order:
+        if column_key in state['skip_columns']:
+            continue
         for aircraft in current_data:
             classifications = aircraft[column_key] if isinstance(aircraft[column_key], list) else [aircraft[column_key]]
             for classification in classifications:
@@ -121,8 +127,8 @@ def ask_question(message):
                         state['no_answers']:
                     question = generate_question(classification, column_key)
 
-                    markup = types.ReplyKeyboardMarkup(row_width=2)
-                    markup.add('да', 'нет')
+                    markup = types.ReplyKeyboardMarkup(row_width=3)
+                    markup.add('да', 'нет', 'не знаю')
                     restart_button = types.KeyboardButton('Перезапуск')
                     markup.add(restart_button)
 
@@ -211,6 +217,9 @@ def handle_answer(message):
         state['no_answers'].append((column_key, classification))
         state['current_data'] = [entry for entry in state['current_data'] if classification not in entry[column_key]]
         state['asked_columns'].discard(column_key)  # Удаляем колонку из списка заданных вопросов, если ответ был "нет"
+    elif answer == 'не знаю':
+        state['skip_columns'].add(column_key)  # Добавляем колонку в список пропущенных вопросов
+        state['asked_columns'].discard(column_key)  # Удаляем колонку из списка заданных вопросов
 
     if len(state['current_data']) == 1 and not state['last_question']:
         bot.send_message(user_id, f"Это {state['current_data'][0]['name'].title()}?")
@@ -223,7 +232,6 @@ def handle_answer(message):
         return
 
     ask_question(message)
-
 
 # Функция для сохранения новых данных о самолете
 def save_new_aircraft_data(answers):
