@@ -1,13 +1,24 @@
 import telebot
 from telebot import types
+import pandas as pd
+import os
 import sqlite3
 
 
-bot = telebot.TeleBot('6754617208:AAHyxtRbD43fFGaBXhwbvD0iKvgpOrLdZvY')
+bot = telebot.TeleBot('BOT_TOKEN')
 
 
-def load_data(db_file):
-    conn = sqlite3.connect(db_file)
+# Загрузка данных о владельцах самолётов из Excel файла
+def load_owners_data(file_path='aircraft_owners.xlsx'):
+    if os.path.exists(file_path):
+        df = pd.read_excel(file_path)
+        return df.to_dict(orient='records')
+    return []
+
+
+# Загрузка данных о самолётах из базы данных
+def load_data(file_path='aircrafts.db'):
+    conn = sqlite3.connect(file_path)
     cursor = conn.cursor()
     cursor.execute('SELECT * FROM aircrafts')
     data = cursor.fetchall()
@@ -15,6 +26,7 @@ def load_data(db_file):
     return data
 
 
+# Преобразование данных в удобный формат
 def preprocess_data(data):
     processed_data = []
     for row in data:
@@ -37,7 +49,7 @@ def preprocess_data(data):
     return processed_data
 
 
-# Функция для генерации вопросов на основе классификаций
+# Генерация вопросов на основе классификаций
 def generate_question(classification, column_name):
     questions = {
         'first_flight_year': 'Этот самолёт совершил свой первый полёт в {}-е годы?',
@@ -57,16 +69,18 @@ def generate_question(classification, column_name):
     return questions[column_name].format(classification)
 
 
-# Загрузка данных из базы данных
+# Загрузка данных о владельцах самолётов и данных о самолётах
+owners_data = load_owners_data()
 db_file = 'aircrafts.db'
 data = load_data(db_file)
 processed_data = preprocess_data(data)
 
 user_state = {}
 new_aircraft_data = {}
+aircraft_selection = {}
 
 
-# Функция для перезапуска игры
+# Перезапуск игры
 def reset_game(message, restart=False):
     user_id = message.chat.id
     user_state[user_id] = {
@@ -83,6 +97,8 @@ def reset_game(message, restart=False):
     }
     if user_id in new_aircraft_data:
         new_aircraft_data.pop(user_id)  # Удаляем промежуточные данные о новом самолете
+    if user_id in aircraft_selection:
+        aircraft_selection.pop(user_id)  # Удаляем промежуточные данные о выборе самолета
     if restart:
         bot.send_message(user_id,
                          "Игра перезапущена. Давайте начнем угадывать самолёт заново. Отвечайте на вопросы да, нет или не знаю.")
@@ -98,7 +114,7 @@ def send_welcome(message):
     reset_game(message)
 
 
-# Функция для задания вопроса
+# Задание вопросов
 def ask_question(message):
     user_id = message.chat.id
     state = user_state[user_id]
@@ -169,7 +185,7 @@ def ask_question(message):
     request_new_aircraft_data(user_id)
 
 
-# Функция для запроса данных о новом самолете
+# Запрос данных о новом самолете
 def request_new_aircraft_data(user_id):
     new_aircraft_data[user_id] = {}
     questions = [
@@ -192,12 +208,37 @@ def request_new_aircraft_data(user_id):
     bot.send_message(user_id, questions[0])
 
 
+# Проверка, взят ли самолёт
+def is_aircraft_taken(aircraft_name):
+    owners_data = load_owners_data()
+    for entry in owners_data:
+        if entry['Название самолёта'].lower() == aircraft_name.lower():
+            return entry['ФИО'], entry['Номер группы']
+    return None
+
+
+# Запись самолёта за пользователем
+def take_aircraft(user_id, aircraft_name, owner_name, group_number):
+    file_path = 'aircraft_owners.xlsx'
+    data = {
+        'Название самолёта': [aircraft_name],
+        'ФИО': [owner_name],
+        'Номер группы': [group_number]
+    }
+    df = pd.DataFrame(data)
+    if os.path.exists(file_path):
+        existing_df = pd.read_excel(file_path)
+        df = pd.concat([existing_df, df], ignore_index=True)
+    df.to_excel(file_path, index=False)
+    bot.send_message(user_id, f"Самолёт {aircraft_name} успешно записан за вами.")
+
+
 # Обработчик текстовых сообщений
 @bot.message_handler(func=lambda message: True)
 def handle_answer(message):
     user_id = message.chat.id
 
-    if user_id not in user_state and user_id not in new_aircraft_data:
+    if user_id not in user_state and user_id not in new_aircraft_data and user_id not in aircraft_selection:
         bot.send_message(user_id, "Нажмите /start.")
         return
 
@@ -205,6 +246,7 @@ def handle_answer(message):
         reset_game(message, restart=True)
         return
 
+    # Ответ на вопросы для добавления нового самолета
     if user_id in new_aircraft_data:
         state = new_aircraft_data[user_id]
         state['answers'].append(message.text.strip())
@@ -216,6 +258,35 @@ def handle_answer(message):
             bot.send_message(user_id, "Спасибо! Ваши данные сохранены.")
             new_aircraft_data.pop(user_id)
         return
+
+    # Ответ на вопросы о взятии самолёта
+    if user_id in aircraft_selection:
+        if 'awaiting_fio_group' in aircraft_selection[user_id]:
+            try:
+                fio, group_number = message.text.strip().rsplit(' ', 1)
+                aircraft_selection[user_id]['owner_name'] = fio
+                aircraft_selection[user_id]['group_number'] = group_number
+                aircraft_name = aircraft_selection[user_id]['name']
+                owner_name = aircraft_selection[user_id]['owner_name']
+                group_number = aircraft_selection[user_id]['group_number']
+                take_aircraft(user_id, aircraft_name, owner_name, group_number)
+                bot.send_message(user_id, f"Самолёт {aircraft_name} успешно записан за вами.")
+                bot.send_message(user_id, "Чтобы начать новую игру, нажмите /start.")
+                aircraft_selection.pop(user_id)
+            except ValueError:
+                bot.send_message(user_id, "Неверный формат. Пожалуйста, укажите ваше ФИО и номер группы в формате: Иванов Иван Иванович М14О-101БВ-23")
+            return
+
+        if 'confirming' in aircraft_selection[user_id]:
+            aircraft_name = aircraft_selection[user_id]['name']
+            if message.text.lower() == 'да':
+                bot.send_message(user_id, "Пожалуйста, укажите ваше ФИО и номер группы в формате: Иванов Иван Иванович М14О-101БВ-23")
+                aircraft_selection[user_id]['confirming'] = False
+                aircraft_selection[user_id]['awaiting_fio_group'] = True
+            elif message.text.lower() == 'нет':
+                bot.send_message(user_id, "Вы можете начать новую игру, нажав /start.")
+                aircraft_selection.pop(user_id)
+            return
 
     state = user_state[user_id]
 
@@ -229,7 +300,20 @@ def handle_answer(message):
 
     if answer == 'да':
         if state['last_question']:
-            bot.send_message(user_id, f"Ура, я угадал! Вы загадали самолёт: {state['current_data'][state['aircraft_index'] - 1]['name'].title()}")
+            aircraft_name = state['current_data'][state['aircraft_index'] - 1]['name'].title()
+            bot.send_message(user_id, f"Ура, я угадал! Вы загадали самолёт: {aircraft_name}")
+            send_aircraft_photo(user_id, aircraft_name)
+            owner_info = is_aircraft_taken(aircraft_name)
+            if owner_info:
+                bot.send_message(user_id, f"К сожалению, самолёт {aircraft_name} уже занят. Выберите другой самолёт.")
+                reset_game(message, restart=True)
+            else:
+                aircraft_selection[user_id] = {'name': aircraft_name, 'confirming': True}
+                markup = types.ReplyKeyboardMarkup(row_width=2)
+                markup.add('Да', 'Нет')
+                restart_button = types.KeyboardButton('Перезапуск')
+                markup.add(restart_button)
+                bot.send_message(user_id, "Хотите ли вы взять этот самолёт для курсовой работы?", reply_markup=markup)
             user_state.pop(user_id)
             return
         state['yes_answers'].append((column_key, classification))
@@ -277,7 +361,17 @@ def handle_answer(message):
     ask_question(message)
 
 
-# Функция для сохранения новых данных о самолете
+# Отправка фотографии самолета
+def send_aircraft_photo(user_id, aircraft_name):
+    photo_path = f"photos/{aircraft_name.lower()}.jpg"
+    if os.path.exists(photo_path):
+        with open(photo_path, 'rb') as photo:
+            bot.send_photo(user_id, photo)
+    else:
+        bot.send_message(user_id, "К сожалению, у меня нет фотографии этого самолёта.")
+
+
+# Сохранение новых данных о самолете
 def save_new_aircraft_data(answers):
     conn = sqlite3.connect('aircrafts.db')
     cursor = conn.cursor()
