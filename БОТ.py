@@ -4,8 +4,7 @@ import pandas as pd
 import os
 import sqlite3
 
-
-bot = telebot.TeleBot('6754617208:AAHLjohblRglhFXz5BukAKWhB9H_NoqC3RM')
+bot = telebot.TeleBot('BOT_TOKEN')
 
 
 # Загрузка данных о владельцах самолётов из Excel файла
@@ -100,9 +99,9 @@ def reset_game(message, restart=False):
     if user_id in aircraft_selection:
         aircraft_selection.pop(user_id)  # Удаляем промежуточные данные о выборе самолета
     if restart:
-        bot.send_message(user_id,
-                         "Игра перезапущена. Давайте начнем угадывать самолёт заново. Отвечайте на вопросы да, нет или не знаю.")
-    ask_question(message)
+        bot.send_message(user_id, "Нажмите /start для перезапуска.")
+    else:
+        ask_question(message)
 
 
 # Обработчик команды /start
@@ -135,6 +134,8 @@ def ask_question(message):
             markup.add('да', 'нет', 'не знаю')
             restart_button = types.KeyboardButton('Перезапуск')
             markup.add(restart_button)
+            excel_button = types.KeyboardButton('Показать список самолётов')
+            markup.add(excel_button)
 
             state['current_classification'] = decade
             state['current_column'] = 'first_flight_year'
@@ -166,6 +167,8 @@ def ask_question(message):
                     markup.add('да', 'нет', 'не знаю')
                     restart_button = types.KeyboardButton('Перезапуск')
                     markup.add(restart_button)
+                    excel_button = types.KeyboardButton('Показать список самолётов')
+                    markup.add(excel_button)
 
                     state['current_classification'] = classification
                     state['current_column'] = column_key
@@ -195,11 +198,11 @@ def request_new_aircraft_data(user_id):
         "Подклассификация по назначению: \nДля пассажирского: дозвуковой/сверхзвуковой \nДля военного: "
         "истребитель/штурмовик/транспортный итд \nДля специального назначения: "
         "Сельскохозяйст-венный/Спортивный/Противопожарный/Экспериментальный/Самолёт МЧС \nДля общего назначения: "
-        "Экскурсионный/Часный/Административный \nДля грузовых: Сверхтяжёлый/Тяжелый/Средний/Легкий",
+        "Экскурсионный/Часный/Административный \nДля грузовых: Сверхтяжёлый/Тяжелый/Средний/Легкий самолёт",
         "Классификация по аэродинамической балансировочной схеме:",
         "Классификация по конструкции:",
         "Классификация по типу двигателя:",
-        "Классификация по диапазону полёта: \nБольшой/Средние/Малой дальности",
+        "Классификация по диапазону полёта: \nБольшой/Средний/Малой дальности",
         "Количество двигателей:",
         "Классификация по расположению крыльев:",
         "Классификация по типу фюзеляжа:",
@@ -237,6 +240,16 @@ def take_aircraft(user_id, aircraft_name, owner_name, group_number):
     bot.send_message(user_id, f"Самолёт {aircraft_name} успешно записан за вами.")
 
 
+# Отправка файла с владельцами самолётов
+def send_excel_file(user_id):
+    file_path = 'aircraft_owners.xlsx'
+    if os.path.exists(file_path):
+        with open(file_path, 'rb') as file:
+            bot.send_document(user_id, file)
+    else:
+        bot.send_message(user_id, "Файл с данными о владельцах самолётов не найден.")
+
+
 # Обработчик текстовых сообщений
 @bot.message_handler(func=lambda message: True)
 def handle_answer(message):
@@ -248,6 +261,10 @@ def handle_answer(message):
 
     if message.text.lower() == 'перезапуск':
         reset_game(message, restart=True)
+        return
+
+    if message.text.lower() == 'показать список самолётов':
+        send_excel_file(user_id)
         return
 
     # Ответ на вопросы для добавления нового самолета
@@ -287,7 +304,7 @@ def handle_answer(message):
                 aircraft_selection[user_id]['confirming'] = False
                 aircraft_selection[user_id]['awaiting_fio_group'] = True
             elif message.text.lower() == 'нет':
-                bot.send_message(user_id, "Вы можете начать новую игру, нажав /start.")
+                bot.send_message(user_id, "Нажмите /start для перезапуска.")
                 aircraft_selection.pop(user_id)
             return
 
@@ -308,7 +325,7 @@ def handle_answer(message):
             send_aircraft_photo(user_id, aircraft_name)
             owner_info = is_aircraft_taken(aircraft_name)
             if owner_info:
-                bot.send_message(user_id, f"К сожалению, самолёт {aircraft_name} уже занят. Выберите другой самолёт.")
+                bot.send_message(user_id, f"К сожалению, самолёт {aircraft_name} уже занят. Его взял {owner_info[0]} из группы {owner_info[1]}. Выберите другой самолёт.")
                 reset_game(message, restart=True)
             else:
                 aircraft_selection[user_id] = {'name': aircraft_name, 'confirming': True}
@@ -316,6 +333,8 @@ def handle_answer(message):
                 markup.add('Да', 'Нет')
                 restart_button = types.KeyboardButton('Перезапуск')
                 markup.add(restart_button)
+                excel_button = types.KeyboardButton('Показать список самолётов')
+                markup.add(excel_button)
                 bot.send_message(user_id, "Хотите ли вы взять этот самолёт для курсовой работы?", reply_markup=markup)
             user_state.pop(user_id)
             return
