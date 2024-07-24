@@ -5,7 +5,7 @@ import os
 import sqlite3
 
 
-bot = telebot.TeleBot('BOT_TOKEN')
+bot = telebot.TeleBot('6754617208:AAHLjohblRglhFXz5BukAKWhB9H_NoqC3RM')
 
 
 # Загрузка данных о владельцах самолётов из Excel файла
@@ -190,12 +190,16 @@ def request_new_aircraft_data(user_id):
     new_aircraft_data[user_id] = {}
     questions = [
         "Пожалуйста, укажите название самолёта:",
-        "Классификация по назначению:",
-        "Подклассификация по назначению:",
+        "Укажите год первого полёта:",
+        "Классификация по назначению: \nПассажирский/Военный/Cпециального назначения/Общего назначения/Грузовые",
+        "Подклассификация по назначению: \nДля пассажирского: дозвуковой/сверхзвуковой \nДля военного: "
+        "истребитель/штурмовик/транспортный итд \nДля специального назначения: "
+        "Сельскохозяйст-венный/Спортивный/Противопожарный/Экспериментальный/Самолёт МЧС \nДля общего назначения: "
+        "Экскурсионный/Часный/Административный \nДля грузовых: Сверхтяжёлый/Тяжелый/Средний/Легкий",
         "Классификация по аэродинамической балансировочной схеме:",
         "Классификация по конструкции:",
         "Классификация по типу двигателя:",
-        "Классификация по диапазону полёта:",
+        "Классификация по диапазону полёта: \nБольшой/Средние/Малой дальности",
         "Количество двигателей:",
         "Классификация по расположению крыльев:",
         "Классификация по типу фюзеляжа:",
@@ -270,7 +274,6 @@ def handle_answer(message):
                 owner_name = aircraft_selection[user_id]['owner_name']
                 group_number = aircraft_selection[user_id]['group_number']
                 take_aircraft(user_id, aircraft_name, owner_name, group_number)
-                bot.send_message(user_id, f"Самолёт {aircraft_name} успешно записан за вами.")
                 bot.send_message(user_id, "Чтобы начать новую игру, нажмите /start.")
                 aircraft_selection.pop(user_id)
             except ValueError:
@@ -363,7 +366,7 @@ def handle_answer(message):
 
 # Отправка фотографии самолета
 def send_aircraft_photo(user_id, aircraft_name):
-    photo_path = f"photos/{aircraft_name.lower()}.jpg"
+    photo_path = f"photos/{aircraft_name.lower()}.png"
     if os.path.exists(photo_path):
         with open(photo_path, 'rb') as photo:
             bot.send_photo(user_id, photo)
